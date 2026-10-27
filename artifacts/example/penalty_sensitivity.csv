@@ -1,0 +1,4 @@
+model,false_positive_cost,false_negative_cost,default_threshold,selected_threshold,default_penalty,selected_penalty,penalty_reduction
+random_forest,10,100,0.5,0.2836220952642361,1900,1830,70
+random_forest,10,500,0.5,0.2836220952642361,8300,3030,5270
+random_forest,10,1000,0.5,0.2836220952642361,16300,4530,11770

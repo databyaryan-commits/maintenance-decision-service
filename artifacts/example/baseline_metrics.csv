@@ -1,0 +1,4 @@
+model,split,records,average_precision,threshold,true_positives,false_positives,true_negatives,false_negatives
+dummy,validation,2000,0.0225,0.5,0,0,1955,45
+logistic_regression,validation,2000,0.4161031729876913,0.5,7,3,1952,38
+random_forest,validation,2000,0.5442332256922866,0.5,29,30,1925,16

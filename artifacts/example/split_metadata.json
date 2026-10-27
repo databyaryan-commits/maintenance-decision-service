@@ -1,0 +1,36 @@
+{
+  "dataset": "UCI AI4I 2020",
+  "source_file": "data/raw/ai4i2020.csv",
+  "sha256": "dc6630cd9b1f0f853922fad78a1b6436570d3f1ec863f1dd5c4340ac56bc8a8e",
+  "split_method": "Original row-order block holdout",
+  "is_chronological": false,
+  "target": "Machine failure",
+  "model_features": [
+    "Type",
+    "Air temperature [K]",
+    "Process temperature [K]",
+    "Rotational speed [rpm]",
+    "Torque [Nm]",
+    "Tool wear [min]"
+  ],
+  "splits": {
+    "train": {
+      "start_index": 0,
+      "end_index_exclusive": 6000,
+      "records": 6000,
+      "failures": 255
+    },
+    "validation": {
+      "start_index": 6000,
+      "end_index_exclusive": 8000,
+      "records": 2000,
+      "failures": 45
+    },
+    "test": {
+      "start_index": 8000,
+      "end_index_exclusive": 10000,
+      "records": 2000,
+      "failures": 39
+    }
+  }
+}

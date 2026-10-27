@@ -218,3 +218,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# Local Python environment
+.venv/
+
+# Files generated when installing the project
+*.egg-info/
+
+# Original dataset (download separately from UCI)
+data/raw/
+
+# Locally trained models and temporary outputs
+models/
+artifacts/generated/

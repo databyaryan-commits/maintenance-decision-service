@@ -1,0 +1,21 @@
+{
+  "selection_stage": "validation_only",
+  "status": "pending_review",
+  "selected_model": "random_forest",
+  "selected_threshold": 0.2836220952642361,
+  "decision_rule": "review if score >= threshold",
+  "false_positive_penalty": 10,
+  "false_negative_penalty": 500,
+  "validation_metrics": {
+    "threshold": 0.2836220952642361,
+    "precision": 0.2153846153846154,
+    "recall": 0.9333333333333333,
+    "false_positive_rate": 0.0782608695652174,
+    "true_positives": 42,
+    "false_positives": 153,
+    "true_negatives": 1802,
+    "false_negatives": 3,
+    "penalty_units": 3030
+  },
+  "test_evaluated": false
+}
