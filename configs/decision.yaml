@@ -1,0 +1,27 @@
+model:
+  name: random_forest
+  artifact: models/random_forest.joblib
+  sha256: 33d1981ebed79cc3345fc43b4854e84883e53c5877103d7a55fdb7e7774fb915
+dataset:
+  source: data/raw/ai4i2020.csv
+  sha256: dc6630cd9b1f0f853922fad78a1b6436570d3f1ec863f1dd5c4340ac56bc8a8e
+features:
+- Type
+- Air temperature [K]
+- Process temperature [K]
+- Rotational speed [rpm]
+- Torque [Nm]
+- Tool wear [min]
+decision:
+  threshold: 0.2836220952642361
+  rule: score >= threshold
+  false_positive_penalty: 10
+  false_negative_penalty: 500
+selection:
+  source: artifacts/example/validation_selection.json
+  split: validation
+  status: frozen
+  test_used_for_selection: false
+environment:
+  python: 3.14.7
+  scikit_learn: 1.9.1
