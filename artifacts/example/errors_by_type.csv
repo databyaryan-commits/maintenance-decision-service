@@ -1,0 +1,4 @@
+Type,records,actual_failures,true_positives,false_positives,false_negatives,failure_recall,false_positive_rate
+H,221,0,0,11,0,,0.049773755656108594
+L,1184,32,26,54,6,0.8125,0.046875
+M,595,7,6,26,1,0.8571428571428571,0.04421768707482993
