@@ -1,0 +1,281 @@
+
+"""Evaluate the frozen maintenance model on the final holdout."""
+
+from hashlib import sha256
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.dummy import DummyClassifier
+from sklearn.metrics import (
+    average_precision_score,
+    brier_score_loss,
+    confusion_matrix,
+    precision_score,
+    recall_score,
+)
+
+from maintain.data import (
+    DATA_PATH,
+    EXCLUDED_COLUMNS,
+    MODEL_FEATURES,
+    PROJECT_ROOT,
+    TARGET_COLUMN,
+)
+from maintain.features import select_training_features
+from maintain.frozen import verify_frozen_configuration
+
+
+REPORT_DIR = PROJECT_ROOT / "artifacts" / "example"
+
+
+def load_holdout_data(config):
+    """Check the source and splits before reading test features."""
+
+    if not DATA_PATH.is_file():
+        raise FileNotFoundError(f"Dataset missing: {DATA_PATH}")
+
+    current_checksum = sha256(DATA_PATH.read_bytes()).hexdigest()
+
+    if current_checksum != config["dataset"]["sha256"]:
+        raise ValueError("Dataset checksum has changed.")
+
+    data = pd.read_csv(DATA_PATH)
+    manifest = pd.read_csv(REPORT_DIR / "split_manifest.csv")
+
+    expected_columns = set(MODEL_FEATURES + EXCLUDED_COLUMNS)
+
+    if set(data.columns) != expected_columns:
+        raise ValueError("Dataset columns have changed.")
+
+    if len(data) != 10000 or len(manifest) != 10000:
+        raise ValueError("Unexpected dataset or manifest size.")
+
+    if manifest["row_index"].tolist() != list(range(10000)):
+        raise ValueError("Split row positions have changed.")
+
+    if not data["UDI"].reset_index(drop=True).equals(
+        manifest["UDI"].reset_index(drop=True)
+    ):
+        raise ValueError("Dataset identifiers do not match the split.")
+
+    expected_splits = (
+        ["train"] * 6000
+        + ["validation"] * 2000
+        + ["test"] * 2000
+    )
+
+    if manifest["split"].tolist() != expected_splits:
+        raise ValueError("Split assignments have changed.")
+
+    if not data[TARGET_COLUMN].isin([0, 1]).all():
+        raise ValueError("Unexpected target values.")
+
+    if data[MODEL_FEATURES].isna().any().any():
+        raise ValueError("Missing model input values.")
+
+    # Only the training block is used to check the dummy baseline.
+    training_failure_rate = float(
+        data.iloc[:6000][TARGET_COLUMN].mean()
+    )
+
+    # Test observations are read only after validating the split.
+    test_data = data.iloc[8000:10000].copy()
+
+    features = select_training_features(test_data)
+    actual = test_data[TARGET_COLUMN].to_numpy(dtype=int)
+    identifiers = test_data["UDI"].to_numpy()
+
+    return features, actual, identifiers, training_failure_rate
+
+
+def get_failure_scores(model, features):
+    """Get the score for class 1 from an already fitted model."""
+
+    if list(model.classes_) != [0, 1]:
+        raise ValueError("Expected binary classes [0, 1].")
+
+    if hasattr(model, "feature_names_in_"):
+        if list(model.feature_names_in_) != MODEL_FEATURES:
+            raise ValueError("Fitted model feature names do not match.")
+
+    scores = model.predict_proba(features)[:, 1]
+
+    if not np.isfinite(scores).all():
+        raise ValueError("Model returned non-finite scores.")
+
+    if ((scores < 0) | (scores > 1)).any():
+        raise ValueError("Model scores must be between 0 and 1.")
+
+    return scores
+
+
+def measure_policy(name, policy, actual, scores, threshold, costs):
+    """Calculate performance and assumed penalties for one policy."""
+
+    predicted = (scores >= threshold).astype(int)
+
+    tn, fp, fn, tp = confusion_matrix(
+        actual, predicted, labels=[0, 1]
+    ).ravel()
+
+    penalty = (
+        costs["false_positive_penalty"] * int(fp)
+        + costs["false_negative_penalty"] * int(fn)
+    )
+
+    normal_count = int(tn + fp)
+
+    return {
+        "model": name,
+        "policy": policy,
+        "split": "test",
+        "records": len(actual),
+        "failures": int(actual.sum()),
+        "prevalence": float(actual.mean()),
+        "threshold": float(threshold),
+        "average_precision": float(
+            average_precision_score(actual, scores)
+        ),
+        "brier_score": float(brier_score_loss(actual, scores)),
+        "precision": float(
+            precision_score(actual, predicted, zero_division=0)
+        ),
+        "recall": float(
+            recall_score(actual, predicted, zero_division=0)
+        ),
+        "false_positive_rate": (
+            float(fp / normal_count) if normal_count else 0.0
+        ),
+        "true_positives": int(tp),
+        "false_positives": int(fp),
+        "true_negatives": int(tn),
+        "false_negatives": int(fn),
+        "penalty_units": int(penalty),
+    }
+
+
+def evaluate_holdout():
+    """Evaluate the saved policy without training or changing settings."""
+
+    # Check the frozen model checksum before loading the artifact.
+    config, model_path = verify_frozen_configuration()
+
+    features, actual, identifiers, training_rate = (
+        load_holdout_data(config)
+    )
+
+    # Only load model files generated by this project and trusted locally.
+    selected_model = joblib.load(model_path)
+
+    dummy_path = PROJECT_ROOT / "models" / "dummy.joblib"
+
+    if not dummy_path.is_file():
+        raise FileNotFoundError(
+            "Saved dummy baseline missing. Run the training "
+            "pipeline before evaluating the holdout."
+        )
+
+    dummy_model = joblib.load(dummy_path)
+
+    if (
+        not isinstance(dummy_model, DummyClassifier)
+        or dummy_model.strategy != "prior"
+    ):
+        raise ValueError("Unexpected dummy baseline configuration.")
+
+    selected_scores = get_failure_scores(selected_model, features)
+    dummy_scores = get_failure_scores(dummy_model, features)
+
+    # The dummy model should reflect the training class prevalence.
+    if not np.allclose(
+        dummy_scores, training_rate, rtol=0, atol=1e-12
+    ):
+        raise ValueError("Dummy baseline differs from training prevalence.")
+
+    threshold = config["decision"]["threshold"]
+    costs = config["decision"]
+
+    policies = [
+        (
+            "dummy",
+            "default_0.5",
+            dummy_scores,
+            0.5,
+        ),
+        (
+            config["model"]["name"],
+            "default_0.5",
+            selected_scores,
+            0.5,
+        ),
+        (
+            config["model"]["name"],
+            "validation_selected",
+            selected_scores,
+            threshold,
+        ),
+    ]
+
+    results = [
+        measure_policy(
+            name, policy, actual, scores, policy_threshold, costs
+        )
+        for name, policy, scores, policy_threshold in policies
+    ]
+
+    # Save the outcomes for later reporting and error analysis.
+    metrics = pd.DataFrame(results)
+
+    predictions = pd.DataFrame({
+        "UDI": identifiers,
+        "actual": actual,
+        "dummy_score": dummy_scores,
+        "random_forest_score": selected_scores,
+        "default_action": np.where(
+            selected_scores >= 0.5, "review", "normal"
+        ),
+        "selected_action": np.where(
+            selected_scores >= threshold, "review", "normal"
+        ),
+    })
+
+    metrics.to_csv(
+        REPORT_DIR / "holdout_metrics.csv", index=False
+    )
+
+    predictions.to_csv(
+        REPORT_DIR / "holdout_predictions.csv", index=False
+    )
+
+    print("\nFINAL HOLDOUT EVALUATION")
+    print("-" * 55)
+    print(f"Test observations: {len(actual)}")
+    print(f"Test failures: {int(actual.sum())}")
+    print(f"Failure prevalence: {actual.mean():.2%}")
+    print(f"Frozen model: {config['model']['name']}")
+    print(f"Frozen threshold: {threshold:.8f}")
+
+    for result in results:
+        print(f"\n{result['model']} — {result['policy']}")
+        print(f"Average precision: {result['average_precision']:.4f}")
+        print(f"Brier score: {result['brier_score']:.4f}")
+        print(f"Precision: {result['precision']:.2%}")
+        print(f"Recall: {result['recall']:.2%}")
+        print(
+            f"False positive rate: "
+            f"{result['false_positive_rate']:.2%}"
+        )
+        print(f"True positives: {result['true_positives']}")
+        print(f"False positives: {result['false_positives']}")
+        print(f"True negatives: {result['true_negatives']}")
+        print(f"False negatives: {result['false_negatives']}")
+        print(f"Penalty units: {result['penalty_units']}")
+
+    print("\nSaved holdout_metrics.csv and holdout_predictions.csv")
+    print("No models were retrained or thresholds changed.")
+    print("Final holdout evaluation completed.")
+
+
+if __name__ == "__main__":
+    evaluate_holdout()
