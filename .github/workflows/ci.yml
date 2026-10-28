@@ -14,7 +14,7 @@ permissions:
 jobs:
   test:
     name: Build and test
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 20
 
     steps:
@@ -223,8 +223,7 @@ jobs:
               print(f"Penalty units: {penalty}")
 
           report("Original macOS reference", original_scores, original_reviews)
-          report("Linux reproduction", linux_scores, linux_reviews)
-
+          report("CI runner reproduction", linux_scores, linux_reviews)
           print("\nDecision comparison completed.")
           print("Frozen model configuration remains unchanged.")
           PY
