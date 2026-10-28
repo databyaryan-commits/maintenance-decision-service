@@ -45,6 +45,94 @@ jobs:
       - name: Reproduce trained models
         run: python -m maintain.train
 
+      - name: Diagnose model reproducibility
+        run: |
+          python - <<'PY'
+          import io
+          import platform
+          import subprocess
+          from hashlib import sha256
+          from pathlib import Path
+
+          import numpy as np
+          import pandas as pd
+          import yaml
+
+          config = yaml.safe_load(
+              Path("configs/decision.yaml").read_text(encoding="utf-8")
+          )
+
+          model_path = Path("models/random_forest.joblib")
+          expected_hash = config["model"]["sha256"]
+          actual_hash = sha256(model_path.read_bytes()).hexdigest()
+
+          print("\nMODEL CHECKSUM COMPARISON")
+          print("-" * 55)
+          print(f"Operating system: {platform.system()}")
+          print(f"Expected SHA-256: {expected_hash}")
+          print(f"Actual SHA-256:   {actual_hash}")
+          print(f"Exact match: {actual_hash == expected_hash}")
+
+          reference_bytes = subprocess.check_output(
+              [
+                  "git",
+                  "show",
+                  "HEAD:artifacts/example/validation_predictions.csv",
+              ]
+          )
+
+          reference = pd.read_csv(io.BytesIO(reference_bytes))
+          reproduced = pd.read_csv(
+              "artifacts/example/validation_predictions.csv"
+          )
+
+          print("\nVALIDATION PREDICTION COMPARISON")
+          print("-" * 55)
+          print(f"Reference rows: {len(reference)}")
+          print(f"Reproduced rows: {len(reproduced)}")
+
+          same_ids = reference["UDI"].equals(reproduced["UDI"])
+          same_labels = reference["actual"].equals(reproduced["actual"])
+
+          print(f"Same observation IDs: {same_ids}")
+          print(f"Same true labels: {same_labels}")
+
+          if same_ids and same_labels:
+              original_scores = reference[
+                  "random_forest_score"
+              ].to_numpy()
+
+              linux_scores = reproduced[
+                  "random_forest_score"
+              ].to_numpy()
+
+              differences = np.abs(
+                  original_scores - linux_scores
+              )
+
+              print(
+                  "Maximum score difference:",
+                  f"{differences.max():.16f}",
+              )
+              print(
+                  "Exactly equal scores:",
+                  np.array_equal(original_scores, linux_scores),
+              )
+              print(
+                  "Scores equal within 1e-12:",
+                  np.allclose(
+                      original_scores,
+                      linux_scores,
+                      rtol=0,
+                      atol=1e-12,
+                  ),
+              )
+          else:
+              print("Cannot compare scores: observation alignment differs.")
+
+          print("\nDiagnostic completed.")
+          PY
+
       - name: Verify frozen model
         run: python -m maintain.frozen
 
