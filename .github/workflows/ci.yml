@@ -133,6 +133,102 @@ jobs:
           print("\nDiagnostic completed.")
           PY
 
+      - name: Compare frozen policy decisions
+        run: |
+          python - <<'PY'
+          import io
+          import subprocess
+          from pathlib import Path
+
+          import numpy as np
+          import pandas as pd
+          import yaml
+          from sklearn.metrics import average_precision_score
+
+          config = yaml.safe_load(
+              Path("configs/decision.yaml").read_text(encoding="utf-8")
+          )
+
+          threshold = float(config["decision"]["threshold"])
+          fp_cost = int(config["decision"]["false_positive_penalty"])
+          fn_cost = int(config["decision"]["false_negative_penalty"])
+
+          reference_bytes = subprocess.check_output(
+              [
+                  "git",
+                  "show",
+                  "HEAD:artifacts/example/validation_predictions.csv",
+              ]
+          )
+
+          original = pd.read_csv(io.BytesIO(reference_bytes))
+          linux = pd.read_csv(
+              "artifacts/example/validation_predictions.csv"
+          )
+
+          if (
+              not original["UDI"].equals(linux["UDI"])
+              or not original["actual"].equals(linux["actual"])
+          ):
+              raise ValueError("Validation records do not align.")
+
+          actual = original["actual"].to_numpy(dtype=int)
+          original_scores = original[
+              "random_forest_score"
+          ].to_numpy(dtype=float)
+          linux_scores = linux[
+              "random_forest_score"
+          ].to_numpy(dtype=float)
+
+          if not (
+              np.isfinite(original_scores).all()
+              and np.isfinite(linux_scores).all()
+          ):
+              raise ValueError("Invalid prediction scores.")
+
+          original_reviews = original_scores >= threshold
+          linux_reviews = linux_scores >= threshold
+
+          changed = original_reviews != linux_reviews
+
+          print("\nFROZEN DECISION COMPARISON")
+          print("-" * 55)
+          print(f"Frozen threshold: {threshold:.16f}")
+          print(f"Changed decisions: {int(changed.sum())}")
+          print(
+              "Changed observation IDs:",
+              original.loc[changed, "UDI"].tolist(),
+          )
+
+          def report(name, scores, reviews):
+              tp = int(((actual == 1) & reviews).sum())
+              fp = int(((actual == 0) & reviews).sum())
+              fn = int(((actual == 1) & ~reviews).sum())
+              tn = int(((actual == 0) & ~reviews).sum())
+
+              penalty = fp * fp_cost + fn * fn_cost
+              ap = average_precision_score(actual, scores)
+
+              precision = tp / (tp + fp) if tp + fp else 0.0
+              recall = tp / (tp + fn) if tp + fn else 0.0
+
+              print(f"\n{name}")
+              print(f"Average precision: {ap:.6f}")
+              print(f"Precision: {precision:.4%}")
+              print(f"Recall: {recall:.4%}")
+              print(f"True positives: {tp}")
+              print(f"False positives: {fp}")
+              print(f"False negatives: {fn}")
+              print(f"True negatives: {tn}")
+              print(f"Penalty units: {penalty}")
+
+          report("Original macOS reference", original_scores, original_reviews)
+          report("Linux reproduction", linux_scores, linux_reviews)
+
+          print("\nDecision comparison completed.")
+          print("Frozen model configuration remains unchanged.")
+          PY
+
       - name: Verify frozen model
         run: python -m maintain.frozen
 
