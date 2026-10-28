@@ -1,0 +1,55 @@
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14.7'
+          cache: pip
+          cache-dependency-path: requirements-py314.txt
+
+      - name: Install recorded dependencies
+        run: |
+          python -m pip install -r requirements-py314.txt
+          python -m pip install --no-deps -e .
+          python -m pip check
+
+      - name: Download and verify dataset
+        run: python -m maintain.download_data
+
+      - name: Recreate dataset splits
+        run: python -m maintain.splits
+
+      - name: Reproduce trained models
+        run: python -m maintain.train
+
+      - name: Verify frozen model
+        run: python -m maintain.frozen
+
+      - name: Run automated tests
+        run: python -m pytest -q
+
+      - name: Check API and model prediction parity
+        run: python -m maintain.check_parity
